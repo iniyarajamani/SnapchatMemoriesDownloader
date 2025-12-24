@@ -1,8 +1,10 @@
-# Snapchat Memories Downloader with Metadata
+# Snapchat Memories Downloader
 
 A Python script to download Snapchat memories from your JSON data export and automatically embed date and location metadata into the files.
 
 ## Problem Description
+
+Recently, Snapchat announced that in order to "save more than 5GB of Memories, you’ll need to upgrade to one of our Memories storage plans." Which means paying $1.99/month (or more if needed).
 
 Snapchat allows you to export your memories data, but the process has several limitations:
 
@@ -16,15 +18,14 @@ Snapchat allows you to export your memories data, but the process has several li
 
 4. **No Duplicate Prevention**: Not sure if this is a problem with everyone, but there were duplicates in the HTML/JSON for my Snapchat memories, which takes up unecessary space.
 
-
 ## Features
-- ✅ Downloads all memories from Snapchat JSON export (in order from newest to oldest)
-- ✅ Automatically embeds metadata (date and location) into videos
-- ✅ Handles ZIP files - automatically extracts media and discards caption files (working on a way to add overlay to the original media)
-- ✅ Smart retry logic - automatically retries failed downloads and metadata embedding
-- ✅ URL fallback - tries alternate download URLs if primary fails
-- ✅ Unique filenames - uses date + URL hash to prevent duplicates
-- ✅ Resume capability - can resume from any point if interrupted
+
+- Downloads all memories from Snapchat JSON export (in order from newest to oldest)
+- Automatically embeds metadata (date and location) into media
+- Handles ZIP files - automatically extracts media and discards caption files (working on a way to add overlay to the original media)
+- Retry logic - automatically retries failed downloads and metadata embedding
+- URL fallback - tries alternate download URLs if primary fails
+- Resume capability - can resume from any point if interrupted
 
 ## Prerequisites
 
