@@ -6,39 +6,25 @@ A Python script to download Snapchat memories from your JSON data export and aut
 
 Snapchat allows you to export your memories data, but the process has several limitations:
 
-1. **No Bulk Download**: Snapchat's web interface doesn't provide an easy way to download all your memories at once. You'd have to manually download each memory individually, which is time-consuming for large collections.
+1. **Random Order**: When you click the button to download your memories, Snapchat downloads it in a random order, making it impossible to sort it by date (the naming convention has no data regarding the file's data)
 
 2. **Missing Metadata**: When you download memories through Snapchat's interface, the files don't include important metadata like:
    - The date and time the photo/video was taken
    - GPS location coordinates (where the photo/video was taken)
-   - This metadata is crucial for organizing and searching your memories
 
-3. **ZIP File Handling**: Some memories are downloaded as ZIP files containing the media file plus caption/overlay files. Manually extracting and organizing these is tedious.
+3. **ZIP File Handling**: Some memories are downloaded as ZIP files containing the media file plus caption/overlay files. Manually unzipping these files is annoying.
 
-4. **No Duplicate Prevention**: If you download the same memory multiple times, you end up with duplicate files taking up space.
+4. **No Duplicate Prevention**: Not sure if this is a problem with everyone, but there were duplicates in the HTML/JSON for my Snapchat memories, which takes up unecessary space.
 
-5. **No Resume Capability**: If a download is interrupted, you have to start over from the beginning.
-
-This script solves all these problems by:
-- Automatically downloading all memories from your JSON export
-- Embedding date and location metadata directly into the files (EXIF for images, metadata for videos)
-- Automatically handling ZIP files and extracting only the media
-- Preventing duplicate downloads
-- Allowing you to resume from any point if interrupted
-- Providing progress tracking and error handling
 
 ## Features
-
-- ✅ Downloads all memories from Snapchat JSON export
-- ✅ Automatically embeds EXIF metadata (date and GPS coordinates) into images
+- ✅ Downloads all memories from Snapchat JSON export (in order from newest to oldest)
 - ✅ Automatically embeds metadata (date and location) into videos
-- ✅ Handles ZIP files - automatically extracts media and discards caption files
+- ✅ Handles ZIP files - automatically extracts media and discards caption files (working on a way to add overlay to the original media)
 - ✅ Smart retry logic - automatically retries failed downloads and metadata embedding
 - ✅ URL fallback - tries alternate download URLs if primary fails
 - ✅ Unique filenames - uses date + URL hash to prevent duplicates
 - ✅ Resume capability - can resume from any point if interrupted
-- ✅ Skips existing files - won't re-download files that already exist
-- ✅ Progress tracking with detailed status messages
 
 ## Prerequisites
 
@@ -81,12 +67,10 @@ choco install ffmpeg
 
 ## How to Get Your Snapchat Data
 
-1. Open the Snapchat app
-2. Go to **Settings** → **My Data**
-3. Request your data export
-4. Download the ZIP file when ready (usually takes a few hours)
-5. Extract the ZIP file
-6. Locate `json/memories_history.json` in the extracted folder
+1. Log into Snapchat on desktop browser
+2. Go to "My Data"
+3. Select "Export your Memories" AND "Export JSON Files"
+4. Follow the steps to download the data
 
 ## Configuration
 
@@ -95,7 +79,7 @@ Before running the script, edit these variables in `download_with_metadata.py`:
 ```python
 JSON_FILE = "/path/to/your/memories_history.json"
 OUTPUT_DIR = "/path/to/output/directory"
-RESUME_FROM = None  # Set to filename to resume from a specific file
+RESUME_FROM = None  # Set to filename to resume from a specific file (only really needed if script stops in the middle)
 ```
 
 **Example:**
@@ -272,34 +256,6 @@ MAX_METADATA_RETRIES = 3  # Number of retries for metadata embedding
 
 The download timeout is set to 90 seconds. To change it, edit the `timeout=90` parameter in the `download_file` function.
 
-## File Structure
-
-```
-Snapchat_Downloader/
-├── download_with_metadata.py  # Main script
-├── requirements.txt            # Python dependencies
-└── README.md                   # This file
-```
-
-## Limitations
-
-- Requires valid Snapchat download URLs (they may expire over time)
-- Some memories may not have location data in the JSON
-- Video metadata embedding requires ffmpeg
-- Large downloads may take a long time depending on your internet connection
-
-## License
-
-This script is provided as-is for personal use. Use at your own risk.
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
-
-## Support
-
-If you encounter issues:
-1. Check the [Troubleshooting](#troubleshooting) section
-2. Verify all dependencies are installed
-3. Check that your JSON file is valid
-4. Review the error messages for specific issues
