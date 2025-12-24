@@ -17,6 +17,13 @@ try:
 except ImportError:
     HAS_PIEXIF = False
 
+# Try to import PIL/Pillow for image overlay compositing
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
 JSON_FILE = "/Users/iniya/Downloads/mydata~1766461823337/json/memories_history.json"
 OUTPUT_DIR = "/Users/iniya/Downloads/SnapchatMemories_test"
 
@@ -25,6 +32,9 @@ RESUME_FROM = None
 MAX_DOWNLOAD_RETRIES = 3
 MAX_METADATA_RETRIES = 3
 
+# Set to True to composite overlay images onto media files (requires PIL/Pillow for images, ffmpeg for videos)
+ADD_OVERLAYS = False
+
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Check for required dependencies at startup
@@ -32,6 +42,12 @@ if not HAS_PIEXIF:
     print("⚠️  WARNING: piexif is not installed!")
     print("   Image metadata embedding will fail for all images.")
     print("   Install with: pip3 install piexif")
+    print("-" * 60)
+
+if ADD_OVERLAYS and not HAS_PIL:
+    print("⚠️  WARNING: PIL/Pillow is not installed!")
+    print("   Overlay compositing will fail for images.")
+    print("   Install with: pip3 install Pillow")
     print("-" * 60)
 
 with open(JSON_FILE, "r", encoding="utf-8") as f:
@@ -58,7 +74,7 @@ def build_filename(date_str, url, ext):
     return filename
 
 def extract_media_from_zip(zip_path, output_path):
-    """Extract media file from ZIP, discarding caption files."""
+    """Extract media file from ZIP, optionally extracting overlay files too."""
     try:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             file_list = zip_ref.namelist()
@@ -66,15 +82,22 @@ def extract_media_from_zip(zip_path, output_path):
             # Find media files (images/videos) and exclude caption/text files
             media_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v')
             
-            # Filter out directories and overlay/caption files
+            # Filter out directories
             media_files = []
+            overlay_files = []
             for f in file_list:
                 if f.endswith('/'):
                     continue
                 filename_lower = os.path.basename(f).lower()
-                # Skip overlay/caption files
+                
+                # Find overlay files if ADD_OVERLAYS is enabled
+                if ADD_OVERLAYS and 'overlay' in filename_lower and f.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    overlay_files.append(f)
+                
+                # Skip overlay files from media list (unless we're not adding overlays)
                 if 'overlay' in filename_lower:
                     continue
+                    
                 # Check if it's a media file
                 if f.lower().endswith(media_extensions):
                     media_files.append(f)
@@ -93,9 +116,31 @@ def extract_media_from_zip(zip_path, output_path):
             
             # Extract to temp location first
             temp_dir = tempfile.mkdtemp()
+            overlay_path = None
             try:
                 zip_ref.extract(media_file, temp_dir)
                 extracted_path = os.path.join(temp_dir, media_file)
+                
+                # Extract overlay file if enabled and found
+                if ADD_OVERLAYS and overlay_files:
+                    # Use the first overlay file found (or largest if multiple)
+                    overlay_file = max(overlay_files, key=lambda f: zip_ref.getinfo(f).file_size) if len(overlay_files) > 1 else overlay_files[0]
+                    zip_ref.extract(overlay_file, temp_dir)
+                    overlay_path = os.path.join(temp_dir, overlay_file)
+                
+                # Composite overlay onto media if enabled
+                if ADD_OVERLAYS and overlay_path and os.path.exists(overlay_path):
+                    ext = os.path.splitext(output_path)[1].lower()
+                    if ext in ['.jpg', '.jpeg', '.png']:
+                        success, error = composite_overlay_on_image(extracted_path, overlay_path)
+                        if not success:
+                            # Continue even if overlay fails
+                            pass
+                    elif ext == '.mp4':
+                        success, error = composite_overlay_on_video(extracted_path, overlay_path)
+                        if not success:
+                            # Continue even if overlay fails
+                            pass
                 
                 # Move to final location
                 if os.path.exists(output_path):
@@ -104,7 +149,7 @@ def extract_media_from_zip(zip_path, output_path):
                 
                 return True, output_path
             finally:
-                # Clean up temp directory
+                # Clean up temp directory (including overlay if it exists)
                 try:
                     shutil.rmtree(temp_dir)
                 except:
@@ -147,7 +192,7 @@ def download_file(url, filepath, max_retries=MAX_DOWNLOAD_RETRIES):
             # Check if downloaded file is a ZIP
             try:
                 with zipfile.ZipFile(temp_filepath, 'r') as zf:
-                    # It's a ZIP, extract media
+                    # It's a ZIP, extract media (overlay compositing is handled inside extract_media_from_zip)
                     success_extract, result = extract_media_from_zip(temp_filepath, filepath)
                     os.remove(temp_filepath)  # Remove temp ZIP
                     if success_extract:
@@ -253,6 +298,87 @@ def add_exif_metadata(image_path, date_str, lat=None, lon=None):
         
         return True, None
     except Exception as e:
+        return False, str(e)
+
+def composite_overlay_on_image(image_path, overlay_path):
+    """Composite overlay image onto the main image."""
+    if not HAS_PIL:
+        return False, "PIL/Pillow not installed"
+    
+    try:
+        # Open the main image and overlay
+        main_img = Image.open(image_path)
+        overlay_img = Image.open(overlay_path)
+        
+        # Convert overlay to RGBA if needed
+        if overlay_img.mode != 'RGBA':
+            overlay_img = overlay_img.convert('RGBA')
+        
+        # Resize overlay to match main image dimensions if they differ
+        if overlay_img.size != main_img.size:
+            overlay_img = overlay_img.resize(main_img.size, Image.Resampling.LANCZOS)
+        
+        # Convert main image to RGBA if needed
+        if main_img.mode != 'RGBA':
+            main_img = main_img.convert('RGBA')
+        
+        # Composite overlay onto main image
+        composite = Image.alpha_composite(main_img, overlay_img)
+        
+        # Convert back to RGB if original was RGB (for JPEG)
+        if image_path.lower().endswith(('.jpg', '.jpeg')):
+            # Create white background
+            rgb_composite = Image.new('RGB', composite.size, (255, 255, 255))
+            rgb_composite.paste(composite, mask=composite.split()[3] if composite.mode == 'RGBA' else None)
+            composite = rgb_composite
+        
+        # Save the composited image
+        composite.save(image_path, quality=95)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def composite_overlay_on_video(video_path, overlay_path):
+    """Composite overlay image onto video using ffmpeg."""
+    temp_path = None
+    try:
+        # Create temp output file
+        temp_path = video_path + '.overlay.tmp'
+        
+        # Build ffmpeg command to overlay image on video
+        # Scale overlay to match video dimensions and overlay at position 0,0
+        cmd = [
+            'ffmpeg',
+            '-i', video_path,
+            '-i', overlay_path,
+            '-filter_complex', '[1:v]scale=iw:ih[overlay_scaled];[0:v][overlay_scaled]overlay=0:0[out]',
+            '-map', '[out]',
+            '-map', '0:a?',  # Copy audio if present
+            '-c:a', 'copy',
+            '-c:v', 'libx264',
+            '-preset', 'medium',
+            '-crf', '23',
+            '-y',
+            temp_path
+        ]
+        
+        # Run ffmpeg
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode == 0 and os.path.exists(temp_path):
+            # Replace original with temp file
+            shutil.move(temp_path, video_path)
+            return True, None
+        else:
+            error = result.stderr or result.stdout or "Unknown error"
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+            return False, error
+    except FileNotFoundError:
+        return False, "ffmpeg not found"
+    except Exception as e:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
         return False, str(e)
 
 def add_video_metadata(video_path, date_str, lat=None, lon=None):

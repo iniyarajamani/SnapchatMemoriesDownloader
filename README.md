@@ -19,8 +19,9 @@ Snapchat allows you to export your memories data, but the process has several li
 
 ## Features
 - ✅ Downloads all memories from Snapchat JSON export (in order from newest to oldest)
-- ✅ Automatically embeds metadata (date and location) into videos
-- ✅ Handles ZIP files - automatically extracts media and discards caption files (working on a way to add overlay to the original media)
+- ✅ Automatically embeds metadata (date and location) into images and videos
+- ✅ Handles ZIP files - automatically extracts media and discards caption files
+- ✅ **Optional overlay compositing** - can merge overlay images onto media files
 - ✅ Smart retry logic - automatically retries failed downloads and metadata embedding
 - ✅ URL fallback - tries alternate download URLs if primary fails
 - ✅ Unique filenames - uses date + URL hash to prevent duplicates
@@ -32,6 +33,7 @@ Snapchat allows you to export your memories data, but the process has several li
 - Snapchat JSON export file (`memories_history.json`)
 - `piexif` library (for image metadata embedding)
 - `ffmpeg` (for video metadata embedding)
+- `Pillow` library (optional, for overlay compositing on images)
 
 ## Installation
 
@@ -45,6 +47,11 @@ Or install individually:
 
 ```bash
 pip3 install piexif
+```
+
+**For overlay compositing (optional):**
+```bash
+pip3 install Pillow
 ```
 
 ### 2. Install FFmpeg (for video metadata)
@@ -80,7 +87,13 @@ Before running the script, edit these variables in `download_with_metadata.py`:
 JSON_FILE = "/path/to/your/memories_history.json"
 OUTPUT_DIR = "/path/to/output/directory"
 RESUME_FROM = None  # Set to filename to resume from a specific file (only really needed if script stops in the middle)
+ADD_OVERLAYS = False  # Set to True to composite overlay images onto media files
 ```
+
+**Overlay Compositing:**
+- Set `ADD_OVERLAYS = True` to automatically merge overlay images (text/captions) onto your media files
+- Requires `Pillow` for images and `ffmpeg` for videos
+- Overlays are composited during ZIP extraction, so they become part of the final file
 
 **Example:**
 ```python
@@ -161,8 +174,14 @@ Some Snapchat memories are downloaded as ZIP files containing:
 The script automatically:
 - Detects ZIP files
 - Extracts the main media file
-- Discards caption/overlay files
+- By default, discards caption/overlay files
 - Prefers files with "main" in the filename
+
+**Overlay Compositing (Optional):**
+- When `ADD_OVERLAYS = True`, overlay images are automatically composited onto the media
+- For images: Overlay is merged using alpha compositing (requires Pillow)
+- For videos: Overlay is applied using ffmpeg's overlay filter
+- Overlays are scaled to match media dimensions automatically
 
 ### Retry Logic
 
@@ -240,6 +259,15 @@ If resume doesn't work:
 - Make sure `RESUME_FROM` matches the exact filename (including extension)
 - The filename should be in the format: `YYYY-MM-DD_HH-MM-SS_hash.ext`
 - Check that the file exists in the output directory
+
+### Overlay Compositing Issues
+
+If overlay compositing fails:
+- **For images**: Install Pillow with `pip3 install Pillow`
+- **For videos**: Ensure `ffmpeg` is installed and accessible in your PATH
+- Some ZIP files may not contain overlay files - this is normal
+- The script will continue even if overlay compositing fails (media will still be extracted)
+- Video overlay compositing requires re-encoding, which may take longer and increase file size
 
 ## Advanced Configuration
 
