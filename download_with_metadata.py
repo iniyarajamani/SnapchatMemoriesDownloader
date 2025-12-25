@@ -24,15 +24,15 @@ try:
 except ImportError:
     HAS_PIL = False
 
-JSON_FILE = "/Users/iniya/Downloads/mydata~1766461823337/json/memories_history.json"
-OUTPUT_DIR = "/Users/iniya/Downloads/SnapchatMemories_test"
+JSON_FILE = "INSERT_PATH_TO_JSON_FILE"
+OUTPUT_DIR = "INSERT_PATH_TO_OUTPUT_DIRECTORY"
 
 # Date range filtering (set to None to include all dates)
 # Format: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" (time is optional)
 # START_DATE: Only process memories from this date onwards (inclusive)
 # END_DATE: Only process memories up to this date (inclusive)
-START_DATE = "2025-04-20"  # Example: "2025-01-01" or "2025-01-01 00:00:00"
-END_DATE = "2025-04-20"    # Example: "2025-12-31" or "2025-12-31 23:59:59"
+START_DATE = None  # Example: "2025-01-01" or "2025-01-01 00:00:00"
+END_DATE = None    # Example: "2025-12-31" or "2025-12-31 23:59:59"
 
 MAX_DOWNLOAD_RETRIES = 3
 MAX_METADATA_RETRIES = 3
