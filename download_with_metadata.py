@@ -27,13 +27,19 @@ except ImportError:
 JSON_FILE = "/Users/iniya/Downloads/mydata~1766461823337/json/memories_history.json"
 OUTPUT_DIR = "/Users/iniya/Downloads/SnapchatMemories_test"
 
-# Resume from this filename (set to None to start from beginning)
-RESUME_FROM = None
+# Date range filtering (set to None to include all dates)
+# Format: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" (time is optional)
+# START_DATE: Only process memories from this date onwards (inclusive)
+# END_DATE: Only process memories up to this date (inclusive)
+START_DATE = "2025-04-20"  # Example: "2025-01-01" or "2025-01-01 00:00:00"
+END_DATE = "2025-04-20"    # Example: "2025-12-31" or "2025-12-31 23:59:59"
+
 MAX_DOWNLOAD_RETRIES = 3
 MAX_METADATA_RETRIES = 3
 
-# Set to True to composite overlay images onto media files (requires PIL/Pillow for images, ffmpeg for videos)
-ADD_OVERLAYS = False
+# Set to True to composite overlay images onto image files (requires PIL/Pillow)
+# Note: Video overlay is not supported
+ADD_OVERLAYS = True
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -48,6 +54,7 @@ if ADD_OVERLAYS and not HAS_PIL:
     print("⚠️  WARNING: PIL/Pillow is not installed!")
     print("   Overlay compositing will fail for images.")
     print("   Install with: pip3 install Pillow")
+    print("   Note: Overlay compositing is only supported for images, not videos.")
     print("-" * 60)
 
 with open(JSON_FILE, "r", encoding="utf-8") as f:
@@ -128,19 +135,15 @@ def extract_media_from_zip(zip_path, output_path):
                     zip_ref.extract(overlay_file, temp_dir)
                     overlay_path = os.path.join(temp_dir, overlay_file)
                 
-                # Composite overlay onto media if enabled
+                # Composite overlay onto media if enabled (images only)
                 if ADD_OVERLAYS and overlay_path and os.path.exists(overlay_path):
                     ext = os.path.splitext(output_path)[1].lower()
                     if ext in ['.jpg', '.jpeg', '.png']:
                         success, error = composite_overlay_on_image(extracted_path, overlay_path)
-                        if not success:
-                            # Continue even if overlay fails
-                            pass
-                    elif ext == '.mp4':
-                        success, error = composite_overlay_on_video(extracted_path, overlay_path)
-                        if not success:
-                            # Continue even if overlay fails
-                            pass
+                        if success:
+                            print("🎨 Overlay composited (image)", end=" ", flush=True)
+                        # Continue even if overlay fails
+                    # Note: Video overlay is not supported
                 
                 # Move to final location
                 if os.path.exists(output_path):
@@ -338,49 +341,6 @@ def composite_overlay_on_image(image_path, overlay_path):
     except Exception as e:
         return False, str(e)
 
-def composite_overlay_on_video(video_path, overlay_path):
-    """Composite overlay image onto video using ffmpeg."""
-    temp_path = None
-    try:
-        # Create temp output file
-        temp_path = video_path + '.overlay.tmp'
-        
-        # Build ffmpeg command to overlay image on video
-        # Scale overlay to match video dimensions and overlay at position 0,0
-        cmd = [
-            'ffmpeg',
-            '-i', video_path,
-            '-i', overlay_path,
-            '-filter_complex', '[1:v]scale=iw:ih[overlay_scaled];[0:v][overlay_scaled]overlay=0:0[out]',
-            '-map', '[out]',
-            '-map', '0:a?',  # Copy audio if present
-            '-c:a', 'copy',
-            '-c:v', 'libx264',
-            '-preset', 'medium',
-            '-crf', '23',
-            '-y',
-            temp_path
-        ]
-        
-        # Run ffmpeg
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        if result.returncode == 0 and os.path.exists(temp_path):
-            # Replace original with temp file
-            shutil.move(temp_path, video_path)
-            return True, None
-        else:
-            error = result.stderr or result.stdout or "Unknown error"
-            if temp_path and os.path.exists(temp_path):
-                os.remove(temp_path)
-            return False, error
-    except FileNotFoundError:
-        return False, "ffmpeg not found"
-    except Exception as e:
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
-        return False, str(e)
-
 def add_video_metadata(video_path, date_str, lat=None, lon=None):
     """Add metadata to video file using ffmpeg."""
     try:
@@ -478,26 +438,98 @@ def find_duplicate_by_size_and_date(filepath, date_str):
     
     return None
 
-# Find starting point if resuming
-start_index = 0
-if RESUME_FROM:
-    for i, item in enumerate(media_items):
-        date_str = item.get("Date")
-        primary_url = item.get("Media Download Url")
-        if not date_str or not primary_url:
-            continue
-        media_type = item.get("Media Type", "").lower()
-        ext = ".mp4" if media_type == "video" else ".jpg"
-        filename = build_filename(date_str, primary_url, ext)
-        if RESUME_FROM in filename or filename == RESUME_FROM:
-            start_index = i
-            print(f"Resuming from: {filename} (item {i+1}/{len(media_items)})")
-            print("-" * 60)
-            break
+# Parse date range if provided
+start_datetime = None
+end_datetime = None
 
-# Filter items to process
-items_to_process = [item for item in media_items[start_index:] if item.get("Date") and item.get("Media Download Url")]
+if START_DATE:
+    try:
+        # Try parsing with time first, then without
+        try:
+            start_datetime = datetime.strptime(START_DATE, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            start_datetime = datetime.strptime(START_DATE, "%Y-%m-%d")
+        print(f"📅 Start date filter: {start_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+    except ValueError:
+        print(f"⚠️  WARNING: Invalid START_DATE format: {START_DATE}")
+        print("   Expected format: 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS'")
+        print("   Ignoring START_DATE filter")
+
+if END_DATE:
+    try:
+        # Try parsing with time first, then without
+        try:
+            end_datetime = datetime.strptime(END_DATE, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            # If no time specified, set to end of day
+            end_datetime = datetime.strptime(END_DATE, "%Y-%m-%d")
+            end_datetime = end_datetime.replace(hour=23, minute=59, second=59)
+        print(f"📅 End date filter: {end_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+    except ValueError:
+        print(f"⚠️  WARNING: Invalid END_DATE format: {END_DATE}")
+        print("   Expected format: 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS'")
+        print("   Ignoring END_DATE filter")
+
+# Check if filtering for a single day
+if start_datetime and end_datetime and start_datetime.date() == end_datetime.date():
+    print(f"📌 Filtering for single day: {start_datetime.date()}")
+
+# Filter items to process by date range
+items_to_process = []
+for item in media_items:
+    # Check if item has required fields
+    if not item.get("Date") or not item.get("Media Download Url"):
+        continue
+    
+    # Parse item date
+    try:
+        item_date_str = item.get("Date")
+        item_datetime = datetime.strptime(item_date_str, "%Y-%m-%d %H:%M:%S UTC")
+        item_date = item_datetime.date()
+        
+        # Apply date range filters (inclusive on both ends)
+        # When START_DATE and END_DATE are the same day, this will include all items from that day
+        if start_datetime:
+            start_date = start_datetime.date()
+            # If start_datetime has no time component (00:00:00), compare dates only
+            # This allows same-day filtering: START_DATE="2025-04-20" and END_DATE="2025-04-20"
+            if start_datetime.hour == 0 and start_datetime.minute == 0 and start_datetime.second == 0:
+                if item_date < start_date:
+                    continue
+            else:
+                # Compare with time
+                if item_datetime < start_datetime:
+                    continue
+        
+        if end_datetime:
+            end_date = end_datetime.date()
+            # If end_datetime is end of day (23:59:59), compare dates only
+            # This allows same-day filtering: START_DATE="2025-04-20" and END_DATE="2025-04-20"
+            if end_datetime.hour == 23 and end_datetime.minute == 59 and end_datetime.second == 59:
+                if item_date > end_date:
+                    continue
+            else:
+                # Compare with time
+                if item_datetime > end_datetime:
+                    continue
+        
+        items_to_process.append(item)
+    except ValueError:
+        # Skip items with invalid date format
+        continue
+
 total_items = len(items_to_process)
+total_available = len([item for item in media_items if item.get("Date") and item.get("Media Download Url")])
+
+if start_datetime or end_datetime:
+    print(f"📊 Filtered {total_items} file(s) from {total_available} available")
+    if total_items == 0 and total_available > 0:
+        # Show a sample date to help debug
+        sample_item = next((item for item in media_items if item.get("Date") and item.get("Media Download Url")), None)
+        if sample_item:
+            sample_date = datetime.strptime(sample_item.get("Date"), "%Y-%m-%d %H:%M:%S UTC")
+            print(f"   Sample date in data: {sample_date.strftime('%Y-%m-%d %H:%M:%S')}")
+    print("-" * 60)
 
 print(f"Downloading and embedding metadata for {total_items} file(s)...")
 print("-" * 60)
