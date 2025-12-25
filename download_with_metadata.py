@@ -10,14 +10,12 @@ import subprocess
 import re
 from datetime import datetime
 
-# Try to import piexif for EXIF embedding
 try:
     import piexif
     HAS_PIEXIF = True
 except ImportError:
     HAS_PIEXIF = False
 
-# Try to import PIL/Pillow for image overlay compositing
 try:
     from PIL import Image
     HAS_PIL = True
@@ -26,35 +24,21 @@ except ImportError:
 
 JSON_FILE = "INSERT_PATH_TO_JSON_FILE"
 OUTPUT_DIR = "INSERT_PATH_TO_OUTPUT_DIRECTORY"
-
-# Date range filtering (set to None to include all dates)
-# Format: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" (time is optional)
-# START_DATE: Only process memories from this date onwards (inclusive)
-# END_DATE: Only process memories up to this date (inclusive)
-START_DATE = None  # Example: "2025-01-01" or "2025-01-01 00:00:00"
-END_DATE = None    # Example: "2025-12-31" or "2025-12-31 23:59:59"
+START_DATE = None  # "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
+END_DATE = None    # "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
 
 MAX_DOWNLOAD_RETRIES = 3
 MAX_METADATA_RETRIES = 3
-
-# Set to True to composite overlay images onto image files (requires PIL/Pillow)
-# Note: Video overlay is not supported
 ADD_OVERLAYS = True
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Check for required dependencies at startup
 if not HAS_PIEXIF:
-    print("⚠️  WARNING: piexif is not installed!")
-    print("   Image metadata embedding will fail for all images.")
-    print("   Install with: pip3 install piexif")
+    print("⚠️  WARNING: piexif is not installed! Install with: pip3 install piexif")
     print("-" * 60)
 
 if ADD_OVERLAYS and not HAS_PIL:
-    print("⚠️  WARNING: PIL/Pillow is not installed!")
-    print("   Overlay compositing will fail for images.")
-    print("   Install with: pip3 install Pillow")
-    print("   Note: Overlay compositing is only supported for images, not videos.")
+    print("⚠️  WARNING: PIL/Pillow is not installed! Install with: pip3 install Pillow")
     print("-" * 60)
 
 with open(JSON_FILE, "r", encoding="utf-8") as f:
@@ -62,34 +46,12 @@ with open(JSON_FILE, "r", encoding="utf-8") as f:
 
 media_items = data.get("Saved Media", [])
 
-def build_filename(date_str, url, ext):
-    """Build filename using date and URL hash to ensure uniqueness."""
-    dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S UTC")
-    base = dt.strftime("%Y-%m-%d_%H-%M-%S")
-    
-    # Create a short hash from the URL to differentiate files with same timestamp
-    url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
-    filename = f"{base}_{url_hash}{ext}"
-
-    # If file exists, it's the same media (same URL), so skip it
-    # Otherwise, if hash collision, add counter
-    counter = 1
-    while os.path.exists(os.path.join(OUTPUT_DIR, filename)):
-        filename = f"{base}_{url_hash}_{counter}{ext}"
-        counter += 1
-
-    return filename
-
 def extract_media_from_zip(zip_path, output_path):
-    """Extract media file from ZIP, optionally extracting overlay files too."""
     try:
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             file_list = zip_ref.namelist()
-            
-            # Find media files (images/videos) and exclude caption/text files
             media_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v')
             
-            # Filter out directories
             media_files = []
             overlay_files = []
             for f in file_list:
@@ -97,92 +59,71 @@ def extract_media_from_zip(zip_path, output_path):
                     continue
                 filename_lower = os.path.basename(f).lower()
                 
-                # Find overlay files if ADD_OVERLAYS is enabled
                 if ADD_OVERLAYS and 'overlay' in filename_lower and f.lower().endswith(('.png', '.jpg', '.jpeg')):
                     overlay_files.append(f)
                 
-                # Skip overlay files from media list (unless we're not adding overlays)
                 if 'overlay' in filename_lower:
                     continue
                     
-                # Check if it's a media file
                 if f.lower().endswith(media_extensions):
                     media_files.append(f)
             
             if not media_files:
                 return False, "No media file found in ZIP"
             
-            # Prefer file with "main" in the name
             main_files = [f for f in media_files if 'main' in os.path.basename(f).lower()]
             if main_files:
-                # If multiple main files, pick the largest
                 media_file = max(main_files, key=lambda f: zip_ref.getinfo(f).file_size)
             else:
-                # Fallback: get the largest media file
                 media_file = max(media_files, key=lambda f: zip_ref.getinfo(f).file_size)
             
-            # Extract to temp location first
             temp_dir = tempfile.mkdtemp()
             overlay_path = None
             try:
                 zip_ref.extract(media_file, temp_dir)
                 extracted_path = os.path.join(temp_dir, media_file)
                 
-                # Extract overlay file if enabled and found
                 if ADD_OVERLAYS and overlay_files:
-                    # Use the first overlay file found (or largest if multiple)
                     overlay_file = max(overlay_files, key=lambda f: zip_ref.getinfo(f).file_size) if len(overlay_files) > 1 else overlay_files[0]
                     zip_ref.extract(overlay_file, temp_dir)
                     overlay_path = os.path.join(temp_dir, overlay_file)
                 
-                # Composite overlay onto media if enabled (images only)
                 if ADD_OVERLAYS and overlay_path and os.path.exists(overlay_path):
                     ext = os.path.splitext(output_path)[1].lower()
                     if ext in ['.jpg', '.jpeg', '.png']:
                         success, error = composite_overlay_on_image(extracted_path, overlay_path)
                         if success:
                             print("🎨 Overlay composited (image)", end=" ", flush=True)
-                        # Continue even if overlay fails
-                    # Note: Video overlay is not supported
                 
-                # Move to final location
                 if os.path.exists(output_path):
                     os.remove(output_path)
                 shutil.move(extracted_path, output_path)
                 
                 return True, output_path
             finally:
-                # Clean up temp directory (including overlay if it exists)
                 try:
                     shutil.rmtree(temp_dir)
                 except:
                     pass
-    except zipfile.BadZipFile:
-        return False, "Invalid ZIP file"
     except Exception as e:
         return False, f"ZIP extraction error: {str(e)}"
 
 def download_file(url, filepath, max_retries=MAX_DOWNLOAD_RETRIES):
-    """Download file with retry logic, handles GET/POST and ZIP extraction."""
-    use_post = False  # Try GET first, then POST if needed
+    use_post = False
     
     for attempt in range(1, max_retries + 1):
         try:
-            # Try GET first, then POST if GET fails
             if use_post:
-                # POST request: split URL and send query string as POST data
                 parts = url.split('?', 1)
                 post_data = parts[1].encode() if len(parts) > 1 else b''
                 req = urllib.request.Request(parts[0], data=post_data)
                 req.add_header('Content-Type', 'application/x-www-form-urlencoded')
             else:
-                # GET request
                 req = urllib.request.Request(url)
                 req.add_header('X-Snap-Route-Tag', 'mem-dmd')
             
             req.add_header('User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36')
             
-            # Download to temp file first
             temp_filepath = filepath + '.tmp'
             with urllib.request.urlopen(req, timeout=90) as response:
                 with open(temp_filepath, 'wb') as f:
@@ -192,101 +133,77 @@ def download_file(url, filepath, max_retries=MAX_DOWNLOAD_RETRIES):
                             break
                         f.write(chunk)
             
-            # Check if downloaded file is a ZIP
             try:
                 with zipfile.ZipFile(temp_filepath, 'r') as zf:
-                    # It's a ZIP, extract media (overlay compositing is handled inside extract_media_from_zip)
                     success_extract, result = extract_media_from_zip(temp_filepath, filepath)
-                    os.remove(temp_filepath)  # Remove temp ZIP
+                    os.remove(temp_filepath)
                     if success_extract:
                         return True
+                    elif attempt < max_retries:
+                        continue
                     else:
-                        if attempt < max_retries:
-                            continue  # Try again
-                        else:
-                            return False, result
+                        return False, result
             except (zipfile.BadZipFile, zipfile.LargeZipFile):
-                # Not a ZIP, move temp file to final location
                 if os.path.exists(filepath):
                     os.remove(filepath)
                 shutil.move(temp_filepath, filepath)
                 return True
             
         except urllib.error.HTTPError as e:
-            # If GET method not supported, try POST on next attempt
-            if "GET is not supported" in str(e) or e.code == 405:
-                if not use_post:
-                    use_post = True
-                    continue  # Retry immediately with POST
-            
+            if ("GET is not supported" in str(e) or e.code == 405) and not use_post:
+                use_post = True
+                continue
             if attempt < max_retries:
-                continue  # Try again immediately
-            else:
-                return False, str(e)
+                continue
+            return False, str(e)
         except Exception as e:
-            # If GET method not supported, try POST on next attempt
-            if "GET is not supported" in str(e) or "HTTP method GET" in str(e):
-                if not use_post:
-                    use_post = True
-                    continue  # Retry immediately with POST
-            
+            if ("GET is not supported" in str(e) or "HTTP method GET" in str(e)) and not use_post:
+                use_post = True
+                continue
             if attempt < max_retries:
-                continue  # Try again immediately
-            else:
-                return False, str(e)
+                continue
+            return False, str(e)
     
     return False, "All attempts failed"
 
 def parse_location(location_str):
-    """Parse location string like 'Latitude, Longitude: 40.420906, -74.528625'"""
     if not location_str:
         return None, None
     
-    # Extract lat/lon from string
     match = re.search(r'Latitude, Longitude:\s*([-\d.]+),\s*([-\d.]+)', location_str)
     if match:
         try:
-            lat = float(match.group(1))
-            lon = float(match.group(2))
-            return lat, lon
+            return float(match.group(1)), float(match.group(2))
         except:
             pass
     
     return None, None
 
 def decimal_to_dms(decimal):
-    """Convert decimal degrees to degrees, minutes, seconds"""
     degrees = int(abs(decimal))
     minutes_float = (abs(decimal) - degrees) * 60
     minutes = int(minutes_float)
     seconds = (minutes_float - minutes) * 60
-    
     return (degrees, minutes, int(seconds * 100))
 
 def add_exif_metadata(image_path, date_str, lat=None, lon=None):
-    """Add EXIF metadata to image file."""
     if not HAS_PIEXIF:
         return False, "piexif not installed"
     
     try:
-        # Parse date
         dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S UTC")
         date_formatted = dt.strftime("%Y:%m:%d %H:%M:%S")
         
-        # Load existing EXIF or create new
         try:
             exif_dict = piexif.load(image_path)
         except:
             exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}}
         
-        # Set date/time
         exif_dict["0th"][piexif.ImageIFD.DateTime] = date_formatted
         exif_dict["Exif"][piexif.ExifIFD.DateTimeOriginal] = date_formatted
         exif_dict["Exif"][piexif.ExifIFD.DateTimeDigitized] = date_formatted
         
-        # Set GPS if available
         if lat is not None and lon is not None:
-            # Convert to DMS
             lat_dms = decimal_to_dms(lat)
             lon_dms = decimal_to_dms(lon)
             
@@ -295,81 +212,59 @@ def add_exif_metadata(image_path, date_str, lat=None, lon=None):
             exif_dict["GPS"][piexif.GPSIFD.GPSLongitude] = ((lon_dms[0], 1), (lon_dms[1], 1), (lon_dms[2], 100))
             exif_dict["GPS"][piexif.GPSIFD.GPSLongitudeRef] = b'E' if lon >= 0 else b'W'
         
-        # Embed EXIF
         exif_bytes = piexif.dump(exif_dict)
         piexif.insert(exif_bytes, image_path)
-        
         return True, None
     except Exception as e:
         return False, str(e)
 
 def composite_overlay_on_image(image_path, overlay_path):
-    """Composite overlay image onto the main image."""
     if not HAS_PIL:
         return False, "PIL/Pillow not installed"
     
     try:
-        # Open the main image and overlay
         main_img = Image.open(image_path)
         overlay_img = Image.open(overlay_path)
         
-        # Convert overlay to RGBA if needed
         if overlay_img.mode != 'RGBA':
             overlay_img = overlay_img.convert('RGBA')
         
-        # Resize overlay to match main image dimensions if they differ
         if overlay_img.size != main_img.size:
             overlay_img = overlay_img.resize(main_img.size, Image.Resampling.LANCZOS)
         
-        # Convert main image to RGBA if needed
         if main_img.mode != 'RGBA':
             main_img = main_img.convert('RGBA')
         
-        # Composite overlay onto main image
         composite = Image.alpha_composite(main_img, overlay_img)
         
-        # Convert back to RGB if original was RGB (for JPEG)
         if image_path.lower().endswith(('.jpg', '.jpeg')):
-            # Create white background
             rgb_composite = Image.new('RGB', composite.size, (255, 255, 255))
             rgb_composite.paste(composite, mask=composite.split()[3] if composite.mode == 'RGBA' else None)
             composite = rgb_composite
         
-        # Save the composited image
         composite.save(image_path, quality=95)
         return True, None
     except Exception as e:
         return False, str(e)
 
 def add_video_metadata(video_path, date_str, lat=None, lon=None):
-    """Add metadata to video file using ffmpeg."""
     try:
-        # Parse date
         dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S UTC")
         date_formatted = dt.strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Create temp output file
         temp_path = video_path + '.tmp'
         
-        # Build ffmpeg command
         cmd = ['ffmpeg', '-i', video_path, '-c', 'copy']
-        
-        # Add date metadata
         cmd.extend(['-metadata', f'creation_time={date_formatted}'])
         cmd.extend(['-metadata', f'date={date_formatted}'])
         
-        # Add location metadata if available
         if lat is not None and lon is not None:
             cmd.extend(['-metadata', f'location={lat},{lon}'])
             cmd.extend(['-metadata', f'location-eng={lat},{lon}'])
         
         cmd.extend(['-f', 'mp4', '-y', temp_path])
-        
-        # Run ffmpeg
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode == 0 and os.path.exists(temp_path):
-            # Replace original with temp file
             shutil.move(temp_path, video_path)
             return True, None
         else:
@@ -380,12 +275,11 @@ def add_video_metadata(video_path, date_str, lat=None, lon=None):
     except FileNotFoundError:
         return False, "ffmpeg not found"
     except Exception as e:
-        if os.path.exists(temp_path):
+        if 'temp_path' in locals() and os.path.exists(temp_path):
             os.remove(temp_path)
         return False, str(e)
 
 def embed_metadata(filepath, date_str, location_str, media_type, max_retries=MAX_METADATA_RETRIES):
-    """Embed metadata into file with retry logic."""
     lat, lon = parse_location(location_str)
     ext = os.path.splitext(filepath)[1].lower()
     
@@ -399,27 +293,19 @@ def embed_metadata(filepath, date_str, location_str, media_type, max_retries=MAX
         
         if success:
             return True, None
-        
-        if attempt < max_retries:
-            continue  # Retry
     
     return False, error
 
-# Track filenames used in this session to prevent duplicates
 used_filenames = set(os.listdir(OUTPUT_DIR))
 
 def find_duplicate_by_size_and_date(filepath, date_str):
-    """Check if a file with same timestamp and size already exists."""
     if not os.path.exists(filepath):
         return None
     
     file_size = os.path.getsize(filepath)
-    
-    # Convert date string to filename pattern: "YYYY-MM-DD HH:MM:SS UTC" -> "YYYY-MM-DD_HH-MM-SS"
     dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S UTC")
     date_pattern = dt.strftime("%Y-%m-%d_%H-%M-%S")
     
-    # Check all files in output directory
     for existing_file in os.listdir(OUTPUT_DIR):
         if existing_file.startswith('.'):
             continue
@@ -428,23 +314,17 @@ def find_duplicate_by_size_and_date(filepath, date_str):
         if not os.path.isfile(existing_path):
             continue
         
-        # Check if filename starts with same date pattern
-        if existing_file.startswith(date_pattern):
-            # Check if file size matches
-            if os.path.getsize(existing_path) == file_size:
-                # Same timestamp and size - likely duplicate content
-                if existing_path != filepath:  # Don't match the file itself
-                    return existing_path
+        if existing_file.startswith(date_pattern) and os.path.getsize(existing_path) == file_size:
+            if existing_path != filepath:
+                return existing_path
     
     return None
 
-# Parse date range if provided
 start_datetime = None
 end_datetime = None
 
 if START_DATE:
     try:
-        # Try parsing with time first, then without
         try:
             start_datetime = datetime.strptime(START_DATE, "%Y-%m-%d %H:%M:%S")
         except ValueError:
@@ -453,69 +333,52 @@ if START_DATE:
     except ValueError:
         print(f"⚠️  WARNING: Invalid START_DATE format: {START_DATE}")
         print("   Expected format: 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS'")
-        print("   Ignoring START_DATE filter")
 
 if END_DATE:
     try:
-        # Try parsing with time first, then without
         try:
             end_datetime = datetime.strptime(END_DATE, "%Y-%m-%d %H:%M:%S")
         except ValueError:
-            # If no time specified, set to end of day
             end_datetime = datetime.strptime(END_DATE, "%Y-%m-%d")
             end_datetime = end_datetime.replace(hour=23, minute=59, second=59)
         print(f"📅 End date filter: {end_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
     except ValueError:
         print(f"⚠️  WARNING: Invalid END_DATE format: {END_DATE}")
         print("   Expected format: 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS'")
-        print("   Ignoring END_DATE filter")
 
-# Check if filtering for a single day
 if start_datetime and end_datetime and start_datetime.date() == end_datetime.date():
     print(f"📌 Filtering for single day: {start_datetime.date()}")
 
-# Filter items to process by date range
 items_to_process = []
 for item in media_items:
-    # Check if item has required fields
     if not item.get("Date") or not item.get("Media Download Url"):
         continue
     
-    # Parse item date
     try:
         item_date_str = item.get("Date")
         item_datetime = datetime.strptime(item_date_str, "%Y-%m-%d %H:%M:%S UTC")
         item_date = item_datetime.date()
         
-        # Apply date range filters (inclusive on both ends)
-        # When START_DATE and END_DATE are the same day, this will include all items from that day
         if start_datetime:
             start_date = start_datetime.date()
-            # If start_datetime has no time component (00:00:00), compare dates only
-            # This allows same-day filtering: START_DATE="2025-04-20" and END_DATE="2025-04-20"
             if start_datetime.hour == 0 and start_datetime.minute == 0 and start_datetime.second == 0:
                 if item_date < start_date:
                     continue
             else:
-                # Compare with time
                 if item_datetime < start_datetime:
                     continue
         
         if end_datetime:
             end_date = end_datetime.date()
-            # If end_datetime is end of day (23:59:59), compare dates only
-            # This allows same-day filtering: START_DATE="2025-04-20" and END_DATE="2025-04-20"
             if end_datetime.hour == 23 and end_datetime.minute == 59 and end_datetime.second == 59:
                 if item_date > end_date:
                     continue
             else:
-                # Compare with time
                 if item_datetime > end_datetime:
                     continue
         
         items_to_process.append(item)
     except ValueError:
-        # Skip items with invalid date format
         continue
 
 total_items = len(items_to_process)
@@ -524,7 +387,6 @@ total_available = len([item for item in media_items if item.get("Date") and item
 if start_datetime or end_datetime:
     print(f"📊 Filtered {total_items} file(s) from {total_available} available")
     if total_items == 0 and total_available > 0:
-        # Show a sample date to help debug
         sample_item = next((item for item in media_items if item.get("Date") and item.get("Media Download Url")), None)
         if sample_item:
             sample_date = datetime.strptime(sample_item.get("Date"), "%Y-%m-%d %H:%M:%S UTC")
@@ -534,7 +396,6 @@ if start_datetime or end_datetime:
 print(f"Downloading and embedding metadata for {total_items} file(s)...")
 print("-" * 60)
 
-# Download files in order
 downloaded = 0
 skipped = 0
 duplicates_found = 0
@@ -551,7 +412,6 @@ for idx, item in enumerate(items_to_process, start=1):
     alternate_url = item.get("Download Link")
     location_str = item.get("Location", "")
     
-    # Build filename, checking both filesystem and in-memory set
     dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S UTC")
     base = dt.strftime("%Y-%m-%d_%H-%M-%S")
     url_hash = hashlib.md5(primary_url.encode()).hexdigest()[:8]
@@ -564,10 +424,8 @@ for idx, item in enumerate(items_to_process, start=1):
     
     filepath = os.path.join(OUTPUT_DIR, filename)
     
-    # Skip if file already exists on disk
     if os.path.exists(filepath):
         skipped += 1
-        # Try to embed metadata if file exists but might not have metadata
         print(f"[{idx}/{total_items}] {filename} (exists, embedding metadata)...", end=" ", flush=True)
         success, error = embed_metadata(filepath, date_str, location_str, media_type)
         if success:
@@ -579,44 +437,35 @@ for idx, item in enumerate(items_to_process, start=1):
 
     print(f"[{idx}/{total_items}] Downloading {filename}...", end=" ", flush=True)
 
-    # Try primary URL first, then alternate if primary fails
     download_success = False
     last_error = None
     
     for url in [primary_url, alternate_url]:
-        if not url:
+        if not url or download_success:
             continue
-        if download_success:
-            break
         
         result = download_file(url, filepath, max_retries=MAX_DOWNLOAD_RETRIES)
         if result is True:
-            # Check for duplicate content (same timestamp and file size)
             duplicate_file = find_duplicate_by_size_and_date(filepath, date_str)
             if duplicate_file:
-                # Found duplicate - remove downloaded file and use existing one
                 os.remove(filepath)
                 filepath = duplicate_file
                 filename = os.path.basename(duplicate_file)
                 duplicates_found += 1
                 print(f" (duplicate found: {os.path.basename(duplicate_file)})", end="", flush=True)
             
-            used_filenames.add(filename)  # Track this filename to prevent duplicates
+            used_filenames.add(filename)
             download_success = True
             break
         else:
-            # Store error message
             last_error = result[1] if isinstance(result, tuple) else str(result)
-            # Continue to try alternate URL if available
     
     if not download_success:
-        # Both URLs failed
         error_msg = last_error or "All URLs failed"
         print(f"❌ Download failed: {error_msg}")
         failed_download += 1
         continue
     
-    # Download succeeded, now embed metadata
     print("✅ Downloaded, embedding metadata...", end=" ", flush=True)
     success, error = embed_metadata(filepath, date_str, location_str, media_type, max_retries=MAX_METADATA_RETRIES)
     if success:
