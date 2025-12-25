@@ -33,6 +33,7 @@ Snapchat allows you to export your memories data, but the process has several li
 - Snapchat JSON export file (`memories_history.json`)
 - `piexif` library (for image metadata embedding)
 - `ffmpeg` (for video metadata embedding)
+- `Pillow` library (optional, for overlay compositing on images)
 
 ## Installation
 
@@ -46,6 +47,11 @@ Or install individually:
 
 ```bash
 pip3 install piexif
+```
+
+**For overlay compositing (optional):**
+```bash
+pip3 install Pillow
 ```
 
 ### 2. Install FFmpeg (for video metadata)
@@ -80,13 +86,32 @@ Before running the script, edit these variables in `download_with_metadata.py`:
 ```python
 JSON_FILE = "/path/to/your/memories_history.json"
 OUTPUT_DIR = "/path/to/output/directory"
-RESUME_FROM = None  # Set to filename to resume from a specific file (only really needed if script stops in the middle)
+
+# Date range filtering (set to None to include all dates)
+START_DATE = None  # Format: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
+END_DATE = None    # Format: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS"
+
+ADD_OVERLAYS = False  # Set to True to composite overlay images onto media files
 ```
+
+**Date Range Filtering:**
+- Set `START_DATE` to only process memories from this date onwards (inclusive)
+- Set `END_DATE` to only process memories up to this date (inclusive)
+- Set both to the same date to filter for a single day
+- Set to `None` to include all dates
+- Time component is optional - if omitted, `START_DATE` defaults to 00:00:00 and `END_DATE` defaults to 23:59:59
+
+**Overlay Compositing:**
+- Set `ADD_OVERLAYS = True` to automatically merge overlay images (text/captions) onto your media files
+- Requires `Pillow` for images only (video overlay compositing is not supported)
+- Overlays are composited during ZIP extraction, so they become part of the final file
 
 **Example:**
 ```python
 JSON_FILE = "/Users/iniya/Downloads/mydata~1766461823337/json/memories_history.json"
 OUTPUT_DIR = "/Users/iniya/Downloads/SnapchatMemories"
+START_DATE = "2025-04-20"  # Only download memories from April 20, 2025
+END_DATE = "2025-04-20"    # Up to and including April 20, 2025
 ```
 
 ## Usage
@@ -98,30 +123,40 @@ python3 download_with_metadata.py
 ```
 
 The script will:
-1. Download all memories from the JSON file
-2. Automatically embed metadata (date and location) into each file
-3. Show progress for each file
-4. Report summary statistics at the end
+1. Filter memories by date range (if configured)
+2. Download all matching memories from the JSON file
+3. Automatically embed metadata (date and location) into each file
+4. Show progress for each file
+5. Report summary statistics at the end
 
-### Resume from a Specific File
+### Date Range Filtering
 
-If the script is interrupted, you can resume from a specific file:
+To download memories from a specific date range:
 
 1. Edit `download_with_metadata.py` and set:
    ```python
-   RESUME_FROM = "2025-07-04_19-24-21_abc12345.jpg"
+   START_DATE = "2025-01-01"  # Start date (inclusive)
+   END_DATE = "2025-12-31"    # End date (inclusive)
    ```
 
-2. Run the script again:
+2. For a single day, set both to the same date:
+   ```python
+   START_DATE = "2025-04-20"
+   END_DATE = "2025-04-20"
+   ```
+
+3. Run the script:
    ```bash
    python3 download_with_metadata.py
    ```
+
+The script will automatically skip memories outside the specified date range and show how many files were filtered.
 
 ## File Naming Convention
 
 Files are named with the following format:
 
-```
+```text
 YYYY-MM-DD_HH-MM-SS_<url_hash>.<ext>
 ```
 
@@ -162,8 +197,14 @@ Some Snapchat memories are downloaded as ZIP files containing:
 The script automatically:
 - Detects ZIP files
 - Extracts the main media file
-- Discards caption/overlay files
+- By default, discards caption/overlay files
 - Prefers files with "main" in the filename
+
+**Overlay Compositing (Optional):**
+- When `ADD_OVERLAYS = True`, overlay images are automatically composited onto the media
+- For images: Overlay is merged using alpha compositing (requires Pillow)
+- For videos: Overlay compositing is **not supported** - only images can have overlays composited
+- Overlays are scaled to match media dimensions automatically
 
 ### Retry Logic
 
@@ -185,7 +226,7 @@ The script prevents duplicate downloads through multiple methods:
 
 The script provides detailed progress information:
 
-```
+```text
 Downloading and embedding metadata for 2283 file(s)...
 ------------------------------------------------------------
 [1/2283] Downloading 2025-07-04_19-24-21_a8c934d6.jpg... ✅ Downloaded, embedding metadata... ✅
@@ -235,12 +276,21 @@ If files are being skipped:
 - Check the output directory for existing files
 - The script skips existing files to avoid re-downloading
 
-### Resume Not Working
+### Date Range Filter Not Working
 
-If resume doesn't work:
-- Make sure `RESUME_FROM` matches the exact filename (including extension)
-- The filename should be in the format: `YYYY-MM-DD_HH-MM-SS_hash.ext`
-- Check that the file exists in the output directory
+If date filtering isn't working:
+- Check that `START_DATE` and `END_DATE` are in the correct format: `"YYYY-MM-DD"` or `"YYYY-MM-DD HH:MM:SS"`
+- Set to `None` to disable filtering
+- The script will show a warning if the date format is invalid
+- Check the sample date shown in the output to verify your date range
+
+### Overlay Compositing Issues
+
+If overlay compositing fails:
+- **For images**: Install Pillow with `pip3 install Pillow`
+- **For videos**: Overlay compositing is not supported for videos - only images can have overlays composited
+- Some ZIP files may not contain overlay files - this is normal
+- The script will continue even if overlay compositing fails (media will still be extracted)
 
 ## Advanced Configuration
 
